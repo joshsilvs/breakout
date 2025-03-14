@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import numpy as np
 
 # Function to process the uploaded file
 def process_trades(file, max_drawdown, max_trades, selected_assets, min_duration, max_duration):
@@ -12,10 +13,10 @@ def process_trades(file, max_drawdown, max_trades, selected_assets, min_duration
     df.columns = df.iloc[header_row_index]
     df = df.iloc[header_row_index + 1:].reset_index(drop=True)
     df = df.rename(columns=lambda x: str(x).strip())
-    df = df.dropna(subset=["Profit Factor", "Risk of Ruin", "SL $ Per Trade", "Ave Duration"]) 
+    df = df.dropna(subset=["Profit Factor", "Risk of Ruin", "SL $ Per Trade", "Ave Duration", "Strike Rate", "EV - $"]) 
     
     # Convert necessary columns to numeric
-    for col in ["Profit Factor", "Risk of Ruin", "SL $ Per Trade", "TP - %", "SL - %", "Ave Duration"]:
+    for col in ["Profit Factor", "Risk of Ruin", "SL $ Per Trade", "TP - %", "SL - %", "Ave Duration", "Strike Rate", "EV - $"]:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # Calculate max daily loss based on stop loss
@@ -31,6 +32,14 @@ def process_trades(file, max_drawdown, max_trades, selected_assets, min_duration
     best_trades = df_sorted.groupby("Day Of Week").head(max_trades)
     
     return best_trades, df
+
+# Function to simulate future gains using Monte Carlo
+def monte_carlo_simulation(start_balance, trades, strike_rate, ev_per_trade):
+    balance = [start_balance]
+    for _ in range(trades):
+        win = np.random.rand() < (strike_rate / 100)  # Simulating a win based on strike rate
+        balance.append(balance[-1] + ev_per_trade if win else balance[-1] - abs(ev_per_trade))
+    return balance
 
 # Streamlit UI
 st.set_page_config(page_title="Trading Plan Dashboard", layout="wide")
@@ -76,6 +85,19 @@ if uploaded_file:
             - **🎯 TP %**: `{trade['TP - %']:.2f}` | **🛑 SL %**: `{trade['SL - %']:.2f}`
             ---
             """)
+    
+    # Monte Carlo Simulation Graph
+    st.write("### 📊 Future Gain Prediction")
+    trades_to_simulate = st.slider("Number of Future Trades to Simulate", min_value=50, max_value=1000, value=200)
+    start_balance = st.number_input("Starting Balance ($)", min_value=1000, max_value=50000, value=10000, step=1000)
+    avg_ev = best_trades["EV - $"].mean()
+    avg_sr = best_trades["Strike Rate"].mean()
+    
+    if not np.isnan(avg_ev) and not np.isnan(avg_sr):
+        simulation_results = monte_carlo_simulation(start_balance, trades_to_simulate, avg_sr, avg_ev)
+        df_simulation = pd.DataFrame({"Trades": list(range(trades_to_simulate + 1)), "Balance": simulation_results})
+        fig = px.line(df_simulation, x="Trades", y="Balance", title="Projected Account Growth Over Time")
+        st.plotly_chart(fig, use_container_width=True)
     
     # Download option
     csv = best_trades.to_csv(index=False).encode('utf-8')
